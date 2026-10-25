@@ -1,0 +1,217 @@
+import { Cable, MousePointerClick, Trash2, TriangleAlert, Unplug } from 'lucide-react'
+import { useEffect, useState } from 'react'
+
+import { Button } from '@/components/ui/Button'
+import { Empty, Field, SectionTitle, TextInput } from '@/components/ui/Field'
+import { cableEndpoints } from '@/lib/cableLabel'
+import { deviceRole } from '@/lib/devices'
+import { visualFor } from '@/lib/deviceVisuals'
+import { useTopologyStore } from '@/stores/topologyStore'
+import { useValidationStore } from '@/stores/validationStore'
+
+import { FirewallConfig } from './FirewallConfig'
+import { HostConfig } from './HostConfig'
+import { RouterConfig } from './RouterConfig'
+import { SwitchConfig } from './SwitchConfig'
+
+/** Human labels for the role a device is currently playing. */
+const ROLE_LABELS: Record<string, string> = {
+  pc: 'PC',
+  switch: 'Switch',
+  router: 'Router',
+  firewall: 'Firewall',
+  server: 'Server',
+  'web-server': 'Web Server',
+  'dns-server': 'DNS Server',
+  'dhcp-server': 'DHCP Server',
+  'vpn-server': 'VPN Gateway',
+}
+
+export function ConfigPanel() {
+  const selectedDeviceId = useTopologyStore((state) => state.selectedDeviceId)
+  const selectedLinkId = useTopologyStore((state) => state.selectedLinkId)
+  const device = useTopologyStore((state) =>
+    state.devices.find((d) => d.id === state.selectedDeviceId),
+  )
+
+  if (device) return <DeviceConfig deviceId={device.id} />
+  if (selectedLinkId) return <LinkConfig linkId={selectedLinkId} />
+  if (selectedDeviceId) return <Empty>That device no longer exists.</Empty>
+
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+      <MousePointerClick size={20} className="text-ink-faint" />
+      <p className="text-xs leading-relaxed text-ink-faint">
+        Select a device or a cable on the canvas to configure it.
+      </p>
+    </div>
+  )
+}
+
+function DeviceConfig({ deviceId }: { deviceId: string }) {
+  const device = useTopologyStore((state) => state.devices.find((d) => d.id === deviceId))
+  const renameDevice = useTopologyStore((state) => state.renameDevice)
+  const removeDevice = useTopologyStore((state) => state.removeDevice)
+  // Filter in render: a selector returning a fresh array on every call would
+  // never compare equal and would re-render without end.
+  const allIssues = useValidationStore((state) => state.issues)
+  const issues = allIssues.filter((issue) => issue.device_id === deviceId)
+
+  const [name, setName] = useState(device?.name ?? '')
+  useEffect(() => setName(device?.name ?? ''), [device?.id, device?.name])
+
+  if (!device) return null
+  const role = deviceRole(device)
+  const visual = visualFor(device)
+  const RoleIcon = visual.icon
+
+  const commitName = () => {
+    const trimmed = name.trim()
+    if (trimmed && trimmed !== device.name) renameDevice(device.id, trimmed)
+    else setName(device.name)
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex items-end gap-2 border-b border-line px-3 py-3">
+        <span
+          className={`mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${visual.chip} ${visual.text}`}
+          title={ROLE_LABELS[role] ?? device.type}
+        >
+          <RoleIcon size={17} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <Field
+            label={ROLE_LABELS[role] ?? device.type}
+            hint={
+              <span>
+                {device.interfaces.length} port
+                {device.interfaces.length === 1 ? '' : 's'}
+              </span>
+            }
+          >
+            <TextInput
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              onBlur={commitName}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur()
+                if (event.key === 'Escape') setName(device.name)
+              }}
+              className="!font-sans !text-[13px] !font-semibold"
+            />
+          </Field>
+        </span>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {issues.length > 0 ? (
+          <ul className="mb-4 space-y-1.5">
+            {issues.map((issue, index) => (
+              <li
+                key={index}
+                className={`flex gap-2 rounded-md border px-2.5 py-2 text-[11px] leading-relaxed ${
+                  issue.severity === 'error'
+                    ? 'border-bad/30 bg-bad/5 text-bad'
+                    : 'border-warn/30 bg-warn/5 text-warn'
+                }`}
+              >
+                <TriangleAlert size={13} className="mt-px shrink-0" />
+                <span>{issue.message}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {device.type === 'switch' ? (
+          <SwitchConfig device={device} />
+        ) : device.type === 'router' ? (
+          <RouterConfig device={device} />
+        ) : device.type === 'firewall' ? (
+          <FirewallConfig device={device} />
+        ) : (
+          <HostConfig device={device} />
+        )}
+      </div>
+
+      <div className="border-t border-line p-3">
+        <Button
+          variant="danger"
+          size="sm"
+          className="w-full"
+          onClick={() => removeDevice(device.id)}
+        >
+          <Trash2 size={13} />
+          Delete {device.name}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function LinkConfig({ linkId }: { linkId: string }) {
+  const link = useTopologyStore((state) => state.links.find((l) => l.id === linkId))
+  const devices = useTopologyStore((state) => state.devices)
+  const setLinkStatus = useTopologyStore((state) => state.setLinkStatus)
+  const removeLink = useTopologyStore((state) => state.removeLink)
+
+  if (!link) return <Empty>That cable no longer exists.</Empty>
+
+  const { a, b } = cableEndpoints(link, devices)
+  const connected = link.status === 'up'
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="border-b border-line px-3 py-3">
+        <SectionTitle>Cable</SectionTitle>
+        <div className="space-y-1 font-mono text-[12px] text-ink-dim">
+          <div>
+            {a.device?.name ?? 'unknown'}{' '}
+            <span className="text-ink-faint">{a.interfaceName}</span>
+          </div>
+          <div className="text-ink-faint">↕</div>
+          <div>
+            {b.device?.name ?? 'unknown'}{' '}
+            <span className="text-ink-faint">{b.interfaceName}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+        <div
+          className={`flex items-center gap-2 rounded-md border px-2.5 py-2 text-[11px] ${
+            connected ? 'border-ok/30 bg-ok/5 text-ok' : 'border-bad/30 bg-bad/5 text-bad'
+          }`}
+        >
+          {connected ? <Cable size={13} /> : <Unplug size={13} />}
+          {connected ? 'Connected — frames can cross.' : 'Disconnected — nothing gets through.'}
+        </div>
+
+        <Button
+          size="sm"
+          className="w-full"
+          onClick={() => setLinkStatus(link.id, connected ? 'down' : 'up')}
+        >
+          {connected ? 'Disconnect cable' : 'Reconnect cable'}
+        </Button>
+
+        <p className="text-[11px] leading-relaxed text-ink-faint">
+          Disconnecting leaves the cable on the canvas but stops it carrying traffic —
+          handy for seeing exactly how a network fails.
+        </p>
+      </div>
+
+      <div className="border-t border-line p-3">
+        <Button
+          variant="danger"
+          size="sm"
+          className="w-full"
+          onClick={() => removeLink(link.id)}
+        >
+          <Trash2 size={13} />
+          Remove cable
+        </Button>
+      </div>
+    </div>
+  )
+}
