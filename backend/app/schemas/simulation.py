@@ -281,4 +281,6 @@ class ExperimentComparisonResponse(BaseModel):
     mitigated: dict[str, Any]
     explanation: str
     difference_summary: dict[str, Any]
+    alerts: list[SecurityAlertSchema] = Field(default_factory=list)
+
 

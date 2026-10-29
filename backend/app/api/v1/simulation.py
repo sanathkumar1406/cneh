@@ -229,5 +229,6 @@ def compare_experiment(request: ExperimentComparisonRequest) -> ExperimentCompar
         mitigated=result.mitigated.to_dict(),
         explanation=result.explanation,
         difference_summary=result.difference_summary,
+        alerts=[SecurityAlertSchema(**a.to_dict()) for a in result.alerts],
     )
 

@@ -105,6 +105,7 @@ export interface DeviceConfig {
 /** Tables the devices learned. Round-tripped between commands, dropped on export. */
 export interface DeviceRuntime {
   arp_table: Record<string, string>
+  static_arp?: string[]
   mac_table: Record<string, string>
   dns_cache: Record<string, string>
   dhcp_leases: Record<string, string>
@@ -230,6 +231,7 @@ export interface AssignedConfig {
 
 export interface DeviceState {
   arp_table: Record<string, string>
+  static_arp?: string[]
   mac_table: Record<string, string>
   routing_table: RouteEntry[]
   dns_cache: Record<string, string>
@@ -366,6 +368,7 @@ export interface ExperimentComparisonResult {
   mitigated: ExperimentMetrics
   explanation: string
   difference_summary: Record<string, any>
+  alerts?: SecurityAlert[]
 }
 
 export interface ValidationIssue {

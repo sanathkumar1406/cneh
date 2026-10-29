@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from ..arp.packet import ArpOperation, ArpPacket
 from ..core.addressing import (
     LIMITED_BROADCAST,
+    ip_matches_cidr,
     is_broadcast_ip,
     is_valid_ipv4,
     same_subnet,
@@ -559,11 +560,50 @@ class Host(Device):
             )
             return []
 
+        # Check host ingress firewall rules if configured
+        if getattr(self.config, "firewall_rules", None):
+            allowed, rule_desc = self._evaluate_host_firewall(packet)
+            if not allowed:
+                engine.log(
+                    EventType.FIREWALL_DENY,
+                    f"{self.name}: host firewall blocked {_describe_host_traffic(packet)} — {rule_desc}",
+                    severity=Severity.ERROR,
+                    device=self,
+                    interface=in_interface,
+                    frame=frame,
+                )
+                return []
+
         if packet.protocol is IPProtocol.ICMP:
             return self._handle_icmp(packet, frame, in_interface, engine)
         if packet.protocol in (IPProtocol.TCP, IPProtocol.UDP):
             return self._handle_transport(packet, frame, in_interface, engine)
         return []
+
+    def _evaluate_host_firewall(self, packet: IPv4Packet) -> tuple[bool, str]:
+        segment = packet.payload if isinstance(packet.payload, TransportSegment) else None
+        dst_port = segment.dst_port if segment else None
+
+        for index, rule in enumerate(self.config.firewall_rules):
+            wanted = (rule.protocol or "any").strip().lower()
+            if wanted != "any" and wanted != packet.protocol.value.lower():
+                continue
+            if rule.port is not None:
+                if packet.protocol not in (IPProtocol.TCP, IPProtocol.UDP):
+                    continue
+                if dst_port != rule.port:
+                    continue
+            if not ip_matches_cidr(packet.src_ip, rule.source):
+                continue
+            if not ip_matches_cidr(packet.dst_ip, rule.destination):
+                continue
+
+            allowed = rule.action.lower() != "deny"
+            desc = rule.description or f"rule {index + 1} ({rule.action})"
+            return allowed, desc
+
+        default_deny = getattr(self.config, "firewall_default_policy", "allow").lower() == "deny"
+        return not default_deny, "default policy"
 
     def _handle_icmp(
         self,
@@ -822,6 +862,16 @@ class Host(Device):
         if not state:
             return
         self.dns_cache = dict(state.get("dns_cache") or {})
+
+
+def _describe_host_traffic(packet: IPv4Packet) -> str:
+    segment = packet.payload if isinstance(packet.payload, TransportSegment) else None
+    if segment is not None:
+        return (
+            f"{packet.src_ip} → {packet.dst_ip} "
+            f"{describe_port(segment.protocol, segment.dst_port)}"
+        )
+    return f"{packet.protocol.value} {packet.src_ip} → {packet.dst_ip}"
 
 
 def _describe_payload(packet: IPv4Packet) -> str:

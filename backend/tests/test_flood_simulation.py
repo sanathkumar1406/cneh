@@ -164,8 +164,62 @@ class TestFloodSimulation:
 
         assert comp.scenario_type == "syn"
         assert comp.baseline.phase_name.startswith("Baseline")
+        assert comp.baseline.packets_delivered == 1
+        assert comp.baseline.packets_dropped == 0
+        assert comp.baseline.simulated_availability_pct == 100.0
         assert comp.attack.simulated_availability_pct < comp.mitigated.simulated_availability_pct
         assert comp.mitigated.packets_dropped > comp.attack.packets_dropped
         assert "packets_filtered" in comp.difference_summary
         assert comp.difference_summary["availability_recovered_pct"] > 0
         assert len(comp.explanation) > 20
+        assert len(comp.alerts) > 0
+
+    def test_experiment_comparison_without_firewall_device(self):
+        """Verifies PC-Switch-Server topology auto-mitigates via host firewall and reports accurate metrics."""
+        net = TopologyBuilder()
+        net.pc("PC-01", "192.168.1.10")
+        net.switch("SW-01")
+        net.server("Server-01", "192.168.1.50", services=[http()])
+        net.link("PC-01", 0, "SW-01", 0)
+        net.link("SW-01", 1, "Server-01", 0)
+        topo = net.build()
+
+        comp = compare_flood_experiment(
+            topology=topo,
+            mitigated_topology=topo,
+            source_id=net.device_id("PC-01"),
+            target_id=net.device_id("Server-01"),
+            scenario_type="syn",
+            packet_count=25,
+            target_port=80,
+        )
+
+        # Baseline: 1 sent, 1 delivered, 0 dropped, 100% health
+        assert comp.baseline.packets_sent == 1
+        assert comp.baseline.packets_delivered == 1
+        assert comp.baseline.packets_dropped == 0
+        assert comp.baseline.simulated_availability_pct == 100.0
+
+        # Attack: unmitigated, 25 delivered, 0 dropped, degraded health
+        assert comp.attack.packets_sent == 25
+        assert comp.attack.packets_delivered == 25
+        assert comp.attack.packets_dropped == 0
+        assert comp.attack.simulated_availability_pct < 50.0
+        assert comp.attack.simulated_latency_ms > 200.0
+
+        # Mitigated: 25 dropped by host firewall, 0 delivered, 100% health, 1.2ms latency
+        assert comp.mitigated.packets_sent == 25
+        assert comp.mitigated.packets_delivered == 0
+        assert comp.mitigated.packets_dropped == 25
+        assert comp.mitigated.simulated_availability_pct == 100.0
+        assert comp.mitigated.simulated_latency_ms < 5.0
+
+        # Differences
+        assert comp.difference_summary["packets_filtered"] == 25
+        assert comp.difference_summary["availability_recovered_pct"] > 50.0
+        assert comp.difference_summary["latency_reduction_ms"] > 200.0
+
+        # Alerts returned
+        syn_alerts = [a for a in comp.alerts if a.rule == "TCP_SYN_FLOOD_DETECTED"]
+        assert len(syn_alerts) >= 1
+

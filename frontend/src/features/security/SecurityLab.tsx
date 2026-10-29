@@ -168,20 +168,26 @@ export function SecurityLab() {
     setCompLoading(true)
     try {
       const baseTopo = toDocument()
-      // Create a mitigated copy of topology with a firewall deny rule if a firewall exists
+      // Create a mitigated copy of topology with defense rules applied to target host and perimeter firewalls
       const mitigatedTopo = JSON.parse(JSON.stringify(baseTopo))
-      const fw = mitigatedTopo.devices.find((d: any) => d.type === 'firewall')
+      const targetDev = mitigatedTopo.devices.find((d: any) => d.id === effectiveFloodTarget)
+      const fwDevs = mitigatedTopo.devices.filter((d: any) => d.type === 'firewall')
       const srcDev = baseTopo.devices.find((d: any) => d.id === effectiveFloodSource)
-      const srcIp = srcDev?.interfaces?.[0]?.ipv4 || 'any'
+      const activeSrcIface = srcDev?.interfaces?.find((i: any) => i.enabled && i.ipv4)
+      const srcIp = activeSrcIface?.ipv4 || srcDev?.interfaces?.[0]?.ipv4 || 'any'
 
-      if (fw) {
-        fw.config.firewall_rules.unshift({
+      const devicesToProtect = [targetDev, ...fwDevs].filter(Boolean)
+      for (const dev of devicesToProtect) {
+        if (!dev.config.firewall_rules) {
+          dev.config.firewall_rules = []
+        }
+        dev.config.firewall_rules.unshift({
           action: 'deny',
           protocol: floodType === 'syn' ? 'tcp' : floodType === 'udp' ? 'udp' : 'icmp',
           port: floodType === 'syn' || floodType === 'udp' ? targetPort : null,
           source: srcIp,
           destination: 'any',
-          description: `Auto-Mitigation: Drop ${floodType.toUpperCase()} flood from ${srcIp}`,
+          description: `Defense: Drop ${floodType.toUpperCase()} flood from ${srcIp}`,
         })
       }
 
@@ -195,6 +201,9 @@ export function SecurityLab() {
         targetPort,
       )
       setCompResult(res)
+      if (res.alerts && res.alerts.length > 0) {
+        useSimulationStore.getState().addAlerts(res.alerts)
+      }
       notify('3-Phase experiment completed successfully.', 'success')
     } catch (e) {
       notify('Experiment comparison failed.', 'error')
@@ -575,23 +584,92 @@ export function SecurityLab() {
         {/* Experiment Comparison Tab */}
         {mode === 'comparison' && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between rounded-md border border-line bg-panel p-3">
-              <div>
-                <div className="font-semibold text-ink">3-Phase Empirical Comparison</div>
-                <div className="text-[11px] text-ink-faint">
-                  Compares Baseline (normal traffic), Unmitigated Attack, and Defended Traffic under identical workload.
+            <div className="rounded-md border border-line bg-panel p-3 space-y-3">
+              <div className="flex items-center justify-between border-b border-line-soft pb-2">
+                <div>
+                  <div className="font-semibold text-ink">3-Phase Empirical Comparison</div>
+                  <div className="text-[11px] text-ink-faint">
+                    Compares Baseline (normal traffic), Unmitigated Attack, and Defended Traffic under identical workload.
+                  </div>
                 </div>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={handleRunComparison}
+                  disabled={compLoading}
+                  className="gap-1.5"
+                >
+                  <Scale size={13} />
+                  {compLoading ? 'Testing 3 Phases...' : 'Run Experiment Comparison'}
+                </Button>
               </div>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={handleRunComparison}
-                disabled={compLoading}
-                className="gap-1.5"
-              >
-                <Scale size={13} />
-                {compLoading ? 'Testing 3 Phases...' : 'Run Experiment Comparison'}
-              </Button>
+
+              {/* Experiment Configuration Parameters */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1">
+                <Field label="Attacker (Source)">
+                  <select
+                    value={effectiveFloodSource}
+                    onChange={(e) => setFloodSourceId(e.target.value)}
+                    className="w-full rounded border border-line bg-surface px-2 py-1 font-mono text-[11px]"
+                  >
+                    {pcs.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name} ({d.interfaces[0]?.ipv4 || 'no IP'})
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field label="Target Host">
+                  <select
+                    value={effectiveFloodTarget}
+                    onChange={(e) => setFloodTargetId(e.target.value)}
+                    className="w-full rounded border border-line bg-surface px-2 py-1 font-mono text-[11px]"
+                  >
+                    {pcs
+                      .filter((d) => d.id !== effectiveFloodSource)
+                      .map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name} ({d.interfaces[0]?.ipv4 || 'no IP'})
+                        </option>
+                      ))}
+                  </select>
+                </Field>
+
+                <Field label="Flood Type">
+                  <select
+                    value={floodType}
+                    onChange={(e) => setFloodType(e.target.value as FloodType)}
+                    className="w-full rounded border border-line bg-surface px-2 py-1 font-mono text-[11px]"
+                  >
+                    <option value="syn">TCP SYN Flood</option>
+                    <option value="udp">UDP Flood</option>
+                    <option value="icmp">ICMP Echo</option>
+                  </select>
+                </Field>
+
+                <Field label="Burst Count">
+                  <select
+                    value={packetCount}
+                    onChange={(e) => setPacketCount(Number(e.target.value))}
+                    className="w-full rounded border border-line bg-surface px-2 py-1 font-mono text-[11px]"
+                  >
+                    <option value={15}>15 packets</option>
+                    <option value={20}>20 packets</option>
+                    <option value={25}>25 packets</option>
+                    <option value={35}>35 packets</option>
+                    <option value={50}>50 packets (Max)</option>
+                  </select>
+                </Field>
+
+                <Field label="Target Port">
+                  <TextInput
+                    value={String(targetPort)}
+                    onChange={(e) => setTargetPort(Number(e.target.value) || 80)}
+                    placeholder="80"
+                  />
+                </Field>
+              </div>
             </div>
 
             {!compResult ? (

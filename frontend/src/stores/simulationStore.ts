@@ -42,6 +42,7 @@ interface SimulationState {
   error: string | null
 
   load: (events: SimEvent[], packets: PacketSnapshot[], alerts?: SecurityAlert[]) => void
+  addAlerts: (alerts: SecurityAlert[]) => void
   clear: () => void
   clearAlerts: () => void
   setRunning: (running: boolean) => void
@@ -103,12 +104,20 @@ export const useSimulationStore = create<SimulationState>()((set, get) => {
     running: false,
     error: null,
 
-    load: (events, packets, alerts) =>
+    load: (events, packets, alerts) => {
+      const incoming = alerts ?? []
+      const current = get().alerts
+      const merged = [...current]
+      for (const a of incoming) {
+        if (!merged.some((m) => m.id === a.id)) {
+          merged.push(a)
+        }
+      }
       set({
         events,
         packets,
         packetsByUid: Object.fromEntries(packets.map((p) => [p.frame_uid, p])),
-        alerts: alerts ?? [],
+        alerts: incoming.length > 0 ? merged : current,
         cursor: 0,
         elapsed: 0,
         transit: null,
@@ -116,7 +125,19 @@ export const useSimulationStore = create<SimulationState>()((set, get) => {
         // A trace with nothing on the wire has nothing to animate.
         playing: events.length > 0,
         error: null,
-      }),
+      })
+    },
+
+    addAlerts: (newAlerts) => {
+      const current = get().alerts
+      const merged = [...current]
+      for (const a of newAlerts) {
+        if (!merged.some((m) => m.id === a.id)) {
+          merged.push(a)
+        }
+      }
+      set({ alerts: merged })
+    },
 
     clear: () =>
       set({

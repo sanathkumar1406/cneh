@@ -12,6 +12,7 @@ import { createDevice, createLink, emptyConfig, freeInterfaceOrGrow } from '@/li
 import type {
   Device,
   DeviceConfig,
+  DeviceRuntime,
   DeviceState,
   Link,
   LinkStatus,
@@ -67,9 +68,10 @@ function patchDevice(devices: Device[], deviceId: string, fn: (device: Device) =
   return devices.map((device) => (device.id === deviceId ? fn(device) : device))
 }
 
-function emptyRuntime() {
+function emptyRuntime(): DeviceRuntime {
   return {
     arp_table: {},
+    static_arp: [],
     mac_table: {},
     dns_cache: {},
     dhcp_leases: {},
@@ -216,6 +218,7 @@ export const useTopologyStore = create<TopologyState>()(
               ...device,
               runtime: {
                 arp_table: learned.arp_table,
+                static_arp: learned.static_arp ?? [],
                 mac_table: learned.mac_table,
                 dns_cache: learned.dns_cache ?? {},
                 dhcp_leases: learned.dhcp_leases ?? {},
